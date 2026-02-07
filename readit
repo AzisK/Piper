@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""readit - A CLI that reads text aloud using piper-tts."""
+
+import argparse
+import io
+import select
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Callable, Optional, TextIO
+
+DEFAULT_MODEL = Path(__file__).parent / "en_US-kristin-medium.onnx"
+
+QUIT_WORDS = ("quit", "exit", ":q")
+
+BRACKETED_PASTE_ON = "\033[?2004h"
+BRACKETED_PASTE_OFF = "\033[?2004l"
+PASTE_START = "\033[200~"
+PASTE_END = "\033[201~"
+
+
+def get_text(args: argparse.Namespace) -> str:
+    if args.clipboard:
+        result = subprocess.run(["pbpaste"], capture_output=True, text=True)
+        return result.stdout.strip()
+
+    if args.file:
+        return Path(args.file).read_text()
+
+    if not sys.stdin.isatty():
+        return sys.stdin.read().strip()
+
+    if args.text:
+        return " ".join(args.text)
+
+    print("No input provided. Use --help for usage.", file=sys.stderr)
+    sys.exit(1)
+
+
+def build_piper_cmd(
+    model: Path,
+    speed: float,
+    volume: float,
+    silence: float,
+    output: Optional[Path] = None,
+) -> list[str]:
+    cmd = [
+        sys.executable, "-m", "piper",
+        "--model", str(model),
+        "--length-scale", str(speed),
+        "--volume", str(volume),
+        "--sentence-silence", str(silence),
+    ]
+    if output:
+        cmd += ["--output-file", str(output)]
+    return cmd
+
+
+def speak_text(
+    text: str,
+    args: argparse.Namespace,
+    run: Callable = subprocess.run,
+    stdout: TextIO = sys.stdout,
+    stderr: TextIO = sys.stderr,
+) -> None:
+    if args.output:
+        piper_cmd = build_piper_cmd(args.model, args.speed, args.volume, args.silence, args.output)
+        proc = run(piper_cmd, input=text, text=True, capture_output=True)
+        if proc.returncode != 0:
+            print(f"piper error: {proc.stderr}", file=stderr)
+            sys.exit(1)
+        print(f"Saved to {args.output}", file=stdout)
+    else:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
+            piper_cmd = build_piper_cmd(args.model, args.speed, args.volume, args.silence, Path(tmp.name))
+            proc = run(piper_cmd, input=text, text=True, capture_output=True)
+            if proc.returncode != 0:
+                print(f"piper error: {proc.stderr}", file=stderr)
+                sys.exit(1)
+            run(["afplay", tmp.name])
+
+
+def _has_more_input(stdin: TextIO, timeout: float = 0.05) -> bool:
+    try:
+        ready, _, _ = select.select([stdin], [], [], timeout)
+        return bool(ready)
+    except (ValueError, io.UnsupportedOperation, OSError, TypeError):
+        return False
+
+
+def _strip_paste_markers(line: str) -> tuple[str, bool, bool]:
+    started = PASTE_START in line
+    ended = PASTE_END in line
+    line = line.replace(PASTE_START, "").replace(PASTE_END, "")
+    return line, started, ended
+
+
+def interactive_loop(
+    speak_line: Callable[[str], None],
+    stdin: TextIO = sys.stdin,
+    stderr: TextIO = sys.stderr,
+    prompt: str = "> ",
+    quit_words: tuple[str, ...] = QUIT_WORDS,
+    has_more_input: Optional[Callable[[TextIO], bool]] = None,
+    tty_out: Optional[TextIO] = None,
+) -> int:
+    check_more = has_more_input or (lambda s: _has_more_input(s))
+    is_tty = hasattr(stdin, "isatty") and stdin.isatty()
+    if tty_out is None:
+        tty_out = sys.stdout
+    if is_tty:
+        tty_out.write(BRACKETED_PASTE_ON)
+        tty_out.flush()
+        print("Interactive mode. Type or paste text and press Enter.", file=stderr)
+        print("Type 'quit', 'exit', or ':q' to stop. Ctrl-D for EOF.", file=stderr)
+    try:
+        while True:
+            if is_tty:
+                print(prompt, end="", flush=True, file=stderr)
+            line = stdin.readline()
+            if not line:
+                return 0
+            line, paste_started, paste_ended = _strip_paste_markers(line)
+            line = line.strip()
+            if not line and not paste_started:
+                continue
+            if line.lower() in quit_words:
+                return 0
+            lines = [line] if line else []
+            in_paste = paste_started and not paste_ended
+            while in_paste or check_more(stdin):
+                extra = stdin.readline()
+                if not extra:
+                    break
+                extra, _, ended = _strip_paste_markers(extra)
+                stripped = extra.strip()
+                if ended:
+                    in_paste = False
+                if stripped and stripped.lower() in quit_words:
+                    break
+                if stripped:
+                    lines.append(stripped)
+                if not in_paste and not check_more(stdin):
+                    break
+            if lines:
+                speak_line("\n".join(lines))
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        if is_tty:
+            tty_out.write(BRACKETED_PASTE_OFF)
+            tty_out.flush()
+
+
+def _should_enter_interactive(args: argparse.Namespace, stdin: TextIO) -> bool:
+    if args.interactive:
+        return True
+    if args.text or args.file or args.clipboard:
+        return False
+    if hasattr(stdin, "isatty") and stdin.isatty():
+        return True
+    return False
+
+
+def main(
+    argv: Optional[list[str]] = None,
+    run: Callable = subprocess.run,
+    interactive_loop_fn: Optional[Callable] = None,
+    stdin: Optional[TextIO] = None,
+) -> None:
+    if stdin is None:
+        stdin = sys.stdin
+
+    parser = argparse.ArgumentParser(
+        prog="readit",
+        description="Read text aloud using piper-tts",
+    )
+    parser.add_argument("text", nargs="*", help="Text to read aloud")
+    parser.add_argument("-f", "--file", help="Read text from a file")
+    parser.add_argument("-c", "--clipboard", action="store_true", help="Read text from clipboard")
+    parser.add_argument("-m", "--model", type=Path, default=DEFAULT_MODEL, help="Path to voice model")
+    parser.add_argument("-s", "--speed", type=float, default=1.0, help="Speech speed (default: 1.0, lower=slower)")
+    parser.add_argument("-v", "--volume", type=float, default=1.0, help="Volume multiplier (default: 1.0)")
+    parser.add_argument("-o", "--output", type=Path, help="Save to WAV file instead of playing")
+    parser.add_argument("--silence", type=float, default=0.3, help="Seconds of silence between sentences")
+    parser.add_argument("-i", "--interactive", action="store_true", help="Interactive mode: type/paste text to read")
+
+    args = parser.parse_args(argv)
+
+    if _should_enter_interactive(args, stdin):
+        if not args.model.exists():
+            print(f"Model not found: {args.model}", file=sys.stderr)
+            sys.exit(1)
+        loop_fn = interactive_loop_fn or interactive_loop
+        code = loop_fn(speak_line=lambda line: speak_text(line, args, run=run), stdin=stdin)
+        sys.exit(code)
+
+    text = get_text(args)
+
+    if not text:
+        print("No text to read.", file=sys.stderr)
+        sys.exit(1)
+
+    if not args.model.exists():
+        print(f"Model not found: {args.model}", file=sys.stderr)
+        sys.exit(1)
+
+    speak_text(text, args, run=run)
+
+
+if __name__ == "__main__":
+    main()
