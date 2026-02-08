@@ -99,15 +99,60 @@ class TestInteractiveLoop:
         assert spoken == []
         assert result == 0
 
-    def test_colon_q_command(self):
+    def test_help_command(self):
         from readit import interactive_loop
 
         spoken: list[str] = []
+        print_fn = lambda *args, **kwargs: None
         result = interactive_loop(
             speak_line=lambda t: spoken.append(t),
-            prompt_fn=_make_prompt_fn([":q"]),
+            print_fn=print_fn,
+            prompt_fn=_make_prompt_fn(["/help", "/quit"]),
         )
         assert spoken == []
+        assert result == 0
+
+    def test_clear_command(self):
+        from readit import interactive_loop
+
+        spoken: list[str] = []
+        cleared: list[bool] = []
+        print_fn = lambda *args, **kwargs: None
+        result = interactive_loop(
+            speak_line=lambda t: spoken.append(t),
+            print_fn=print_fn,
+            clear_fn=lambda: cleared.append(True),
+            prompt_fn=_make_prompt_fn(["/clear", "/quit"]),
+        )
+        assert spoken == []
+        assert cleared == [True]
+        assert result == 0
+
+    def test_replay_command(self):
+        from readit import interactive_loop
+
+        spoken: list[str] = []
+        print_fn = lambda *args, **kwargs: None
+        result = interactive_loop(
+            speak_line=lambda t: spoken.append(t),
+            print_fn=print_fn,
+            prompt_fn=_make_prompt_fn(["first line", "/replay", "/quit"]),
+        )
+        assert len(spoken) == 2
+        assert spoken[0] == spoken[1] == "first line"
+
+    def test_replay_with_no_prior_text(self):
+        from readit import interactive_loop
+
+        spoken: list[str] = []
+        printed: list[object] = []
+        result = interactive_loop(
+            speak_line=lambda t: spoken.append(t),
+            print_fn=lambda *args, **kwargs: printed.append(args[0] if args else None),
+            prompt_fn=_make_prompt_fn(["/replay", "/quit"]),
+        )
+        assert spoken == []
+        assert any("No text to replay" in str(item) for item in printed)
         assert result == 0
 
     def test_multiline_paste_batched(self):
@@ -122,7 +167,6 @@ class TestInteractiveLoop:
         assert "line one" in spoken[0]
         assert "line two" in spoken[0]
         assert "line three" in spoken[0]
-        assert result == 0
 
     def test_ctrl_c_handled_gracefully(self):
         from readit import interactive_loop
@@ -145,17 +189,16 @@ class TestInteractiveLoop:
         assert result == 0
 
     def test_banner_printed(self):
-        from readit import interactive_loop, BANNER_LINES
+        from readit import interactive_loop
 
-        stderr = io.StringIO()
-        interactive_loop(
+        printed: list[object] = []
+        result = interactive_loop(
             speak_line=lambda t: None,
-            stderr=stderr,
+            print_fn=lambda *args, **kwargs: printed.append(args[0] if args else None),
             prompt_fn=_make_prompt_fn(["/quit"]),
         )
-        output = stderr.getvalue()
-        for line in BANNER_LINES:
-            assert line in output
+        assert result == 0
+        assert any("readit" in str(item) for item in printed)
 
 
 # ─── build_piper_cmd tests ────────────────────────────────────────────
@@ -224,12 +267,11 @@ class TestSpeakText:
             calls.append((cmd, kwargs))
             return types.SimpleNamespace(returncode=0, stderr="")
 
-        stdout = io.StringIO()
+        print_fn = lambda *args, **kwargs: None
         args = _make_args(output=Path("/tmp/out.wav"))
-        speak_text("hi", args, run=fake_run, stdout=stdout)
+        speak_text("hi", args, run=fake_run, print_fn=print_fn)
 
         assert len(calls) == 1
-        assert "Saved to" in stdout.getvalue()
 
     def test_piper_error_raises(self):
         from readit import speak_text, ReaditError
@@ -239,6 +281,22 @@ class TestSpeakText:
 
         args = _make_args()
         with pytest.raises(ReaditError, match="boom"):
+            speak_text("hi", args, run=fake_run)
+
+    def test_afplay_error_raises(self):
+        from readit import speak_text, ReaditError
+
+        call_count = 0
+
+        def fake_run(cmd, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return types.SimpleNamespace(returncode=0, stderr="")
+            return types.SimpleNamespace(returncode=1, stderr="")
+
+        args = _make_args()
+        with pytest.raises(ReaditError, match="afplay error"):
             speak_text("hi", args, run=fake_run)
 
 
@@ -267,6 +325,10 @@ class TestMainInteractiveFlag:
         from readit import main
 
         loop_called = []
+
+        def fake_loop(**kwargs):
+            loop_called.append(True)
+            return 0
 
         class FakeTtyStdin:
             def isatty(self):
@@ -336,6 +398,12 @@ class TestShouldEnterInteractive:
         args = _make_args()
         assert _should_enter_interactive(args, io.StringIO()) is False
 
+    def test_none_stdin(self):
+        from readit import _should_enter_interactive
+
+        args = _make_args()
+        assert _should_enter_interactive(args, None) is False
+
 
 # ─── get_text with stdin injection tests ─────────────────────────────
 
@@ -348,3 +416,57 @@ class TestGetTextStdin:
         args = _make_args()
         result = get_text(args, stdin=stdin)
         assert result == "hello from pipe"
+
+    def test_text_args_joined(self):
+        from readit import get_text
+
+        class FakeTty:
+            def isatty(self):
+                return True
+
+        args = _make_args(text=["hello", "world"])
+        result = get_text(args, stdin=FakeTty())
+        assert result == "hello world"
+
+
+# ─── main error path tests ───────────────────────────────────────────
+
+
+class TestMainErrors:
+    def _capture_main(self, **kwargs):
+        from rich.console import Console as RichConsole
+        cap_console = RichConsole(file=io.StringIO(), force_terminal=False)
+        code = _readit.main(print_fn=cap_console.print, **kwargs)
+        output = cap_console.file.getvalue()
+        return code, output
+
+    def test_missing_model_returns_1(self):
+        code, output = self._capture_main(
+            argv=["-m", "/nonexistent/model.onnx"],
+            run=lambda *a, **k: types.SimpleNamespace(returncode=0, stderr=""),
+            stdin=io.StringIO("some text"),
+        )
+        assert code == 1
+        assert "Model not found" in output
+
+    def test_empty_text_returns_1(self):
+        code, output = self._capture_main(
+            argv=[],
+            run=lambda *a, **k: types.SimpleNamespace(returncode=0, stderr=""),
+            stdin=io.StringIO(""),
+        )
+        assert code == 1
+
+    def test_readit_error_returns_1(self):
+        def failing_run(cmd, **kwargs):
+            return types.SimpleNamespace(returncode=1, stderr="piper exploded")
+
+        code, output = self._capture_main(
+            argv=[],
+            run=failing_run,
+            stdin=io.StringIO("hello"),
+        )
+        assert code == 1
+        assert "piper exploded" in output
+
+

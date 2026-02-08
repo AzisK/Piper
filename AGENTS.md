@@ -9,6 +9,7 @@ This is `readit`, a Python CLI wrapper around piper-tts for text-to-speech on ma
 - Python 3.14+
 - piper-tts (dependency in pyproject.toml, installed via `uv pip install -e .`)
 - macOS `afplay` for audio playback, `pbpaste` for clipboard access
+- Rich (terminal UI library for styled output)
 - Voice model: `en_US-kristin-medium.onnx` in project root
 
 ## Structure
@@ -28,7 +29,7 @@ This is `readit`, a Python CLI wrapper around piper-tts for text-to-speech on ma
 
 - **Always write tests first (TDD)** — create failing tests before implementing features
 - Test file: `test_readit.py` using `pytest`
-- Tests use dependency injection (fake `run`, `stdin`, `stdout`, `stderr`) to avoid real subprocess calls
+- Tests use dependency injection (fake `run`, `stdin`, `print_fn`) to avoid real subprocess calls
 - The `readit` module is imported directly (`import readit as _readit`)
 - Run full test suite before and after every change: `pytest -v`
 
@@ -38,3 +39,12 @@ This is `readit`, a Python CLI wrapper around piper-tts for text-to-speech on ma
 - Use `argparse` for CLI argument parsing
 - Use `subprocess` to invoke piper and afplay
 - Default model path is resolved relative to the script location
+
+ ## UI Development
+
+ - Use Rich library for terminal UI enhancements (colors, panels, spinners, tables)
+ - Bannerstyled with rich markup in `BANNER_MARKUP` constant
+ - Visual feedback includes spinner during TTS generation
+ - Commands available in interactive mode: `/quit`, `/exit`, `/help`, `/clear`, `/replay`
+ - Tab autocomplete available for commands
+ - Include `print_fn` parameter for testability with dependency injection

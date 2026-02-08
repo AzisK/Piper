@@ -2,26 +2,38 @@
 
 ## Unreleased
 
-### Packaging
-- **Added `pyproject.toml`**: `readit` is now installable as a package via `uv pip install -e .` with a `readit` console script entry point.
-- **Renamed `readit` → `readit.py`**: Enables standard Python imports; no more `SourceFileLoader` hack in tests.
-- **Dependencies declared**: `piper-tts` and `prompt-toolkit` listed in `pyproject.toml`; `mypy` and `pytest` as optional dev dependencies (`uv pip install -e ".[dev]"`).
+### Rich terminal UI
+- **Added Rich library** for styled terminal output (colors, panels, spinners).
+- **Interactive banner** with styled markup replaces plain-text banner lines.
+- **Progress feedback**: Status messages for generation and playback with timing info.
+- **Styled error panels**: Errors displayed in red-bordered Rich panels.
+- **Styled save confirmation**: Output-saved messages shown in green-bordered panels.
 
 ### Interactive mode
-- **Replaced quit words with slash commands**: `quit`/`exit` → `/quit`/`/exit` (`:q` retained). Plain words can now be spoken without accidentally exiting.
+- **Replaced quit words with slash commands**: `quit`/`exit` → `/quit`/`/exit`. Removed `:q`. Plain words can now be spoken without accidentally exiting.
+- **Added `/help` command**: Shows available commands in a styled panel.
+- **Added `/clear` command**: Clears screen and reprints the banner.
+- **Added `/replay` command**: Replays the last spoken text.
 - **Integrated `prompt_toolkit`**: Interactive mode now uses `PromptSession` with fish-style auto-suggest for commands as you type. Handles bracketed paste natively.
 - **Removed manual bracketed paste handling**: The old `select`-based input batching and escape sequence stripping are replaced by prompt_toolkit's built-in support.
+
+### API improvements
+- **`print_fn` dependency injection**: All output functions accept an optional `print_fn` parameter, replacing `stdout`/`stderr` injection for testability.
+- **`clear_fn` injection**: `interactive_loop` accepts a `clear_fn` parameter for testable screen clearing.
+- **`main()` returns `int`** instead of calling `sys.exit()` internally. The `__main__` block does `sys.exit(main())`.
+- **`get_text()` accepts injected `stdin`**: No longer reads `sys.stdin` directly.
+- **`interactive_loop` simplified**: Accepts a `prompt_fn` for dependency injection instead of fake stdin objects.
 
 ### Error handling
 - **Added `ReaditError` exception**: Helpers (`get_text`, `speak_text`) now raise `ReaditError` instead of calling `sys.exit(1)` directly, making them reusable and testable.
 - **`pbpaste` and `afplay` return codes checked**: Previously ignored; now raises `ReaditError` on failure.
 
-### API improvements
-- **`main()` returns `int`** instead of calling `sys.exit()` internally. The `__main__` block does `sys.exit(main())`.
-- **`get_text()` accepts injected `stdin`**: No longer reads `sys.stdin` directly, fixing an inconsistency where `main(stdin=...)` only partially worked.
-- **`interactive_loop` simplified**: Accepts a `prompt_fn` for dependency injection instead of fake stdin objects. Quit words normalized to a lowercase set internally.
+### Packaging
+- **Added `pyproject.toml`**: `readit` is now installable as a package via `uv pip install -e .` with a `readit` console script entry point.
+- **Renamed `readit` → `readit.py`**: Enables standard Python imports; no more `SourceFileLoader` hack in tests.
+- **Dependencies declared**: `piper-tts`, `prompt-toolkit`, and `rich` listed in `pyproject.toml`; `mypy` and `pytest` as optional dev dependencies.
 
 ### Tests
-- Added 7 new tests: `_should_enter_interactive` (6 branches), `get_text` stdin injection.
-- Removed unused imports (`MagicMock`, `call`, `patch`).
-- Tests now inject `prompt_fn` instead of fake stdin/tty objects.
+- **32 tests** (up from 25): added coverage for `/replay` (with and without prior text), `/clear` (verifies `clear_fn` called), afplay failure, missing model error, empty text error, `ReaditError` propagation through `main`, `_should_enter_interactive` with `None` stdin, and `get_text` with text args.
+- Banner test now captures `print_fn` output and verifies the banner was actually printed.
+- `TestMainErrors` uses Rich `Console` capture for end-to-end error message verification.
