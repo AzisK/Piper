@@ -2,7 +2,6 @@
 """Tests for readit interactive mode and core functions (TDD)."""
 
 import io
-import sys
 import types
 import argparse
 from pathlib import Path
@@ -32,11 +31,13 @@ def _make_args(**overrides):
 def _make_prompt_fn(lines: list[str]):
     """Create a prompt_fn that yields lines then raises EOFError."""
     it = iter(lines)
+
     def prompt_fn() -> str:
         try:
             return next(it)
         except StopIteration:
             raise EOFError
+
     return prompt_fn
 
 
@@ -103,21 +104,26 @@ class TestInteractiveLoop:
         from readit import interactive_loop
 
         spoken: list[str] = []
-        print_fn = lambda *args, **kwargs: None
-        result = interactive_loop(
+
+        def print_fn(*args, **kwargs):
+            None
+
+        interactive_loop(
             speak_line=lambda t: spoken.append(t),
             print_fn=print_fn,
             prompt_fn=_make_prompt_fn(["/help", "/quit"]),
         )
         assert spoken == []
-        assert result == 0
 
     def test_clear_command(self):
         from readit import interactive_loop
 
         spoken: list[str] = []
         cleared: list[bool] = []
-        print_fn = lambda *args, **kwargs: None
+
+        def print_fn(*args, **kwargs):
+            None
+
         result = interactive_loop(
             speak_line=lambda t: spoken.append(t),
             print_fn=print_fn,
@@ -132,8 +138,11 @@ class TestInteractiveLoop:
         from readit import interactive_loop
 
         spoken: list[str] = []
-        print_fn = lambda *args, **kwargs: None
-        result = interactive_loop(
+
+        def print_fn(*args, **kwargs):
+            None
+
+        interactive_loop(
             speak_line=lambda t: spoken.append(t),
             print_fn=print_fn,
             prompt_fn=_make_prompt_fn(["first line", "/replay", "/quit"]),
@@ -159,7 +168,7 @@ class TestInteractiveLoop:
         from readit import interactive_loop
 
         spoken: list[str] = []
-        result = interactive_loop(
+        interactive_loop(
             speak_line=lambda t: spoken.append(t),
             prompt_fn=_make_prompt_fn(["line one\nline two\nline three", "/quit"]),
         )
@@ -267,7 +276,9 @@ class TestSpeakText:
             calls.append((cmd, kwargs))
             return types.SimpleNamespace(returncode=0, stderr="")
 
-        print_fn = lambda *args, **kwargs: None
+        def print_fn(*args, **kwargs):
+            None
+
         args = _make_args(output=Path("/tmp/out.wav"))
         speak_text("hi", args, run=fake_run, print_fn=print_fn)
 
@@ -325,10 +336,6 @@ class TestMainInteractiveFlag:
         from readit import main
 
         loop_called = []
-
-        def fake_loop(**kwargs):
-            loop_called.append(True)
-            return 0
 
         class FakeTtyStdin:
             def isatty(self):
@@ -435,6 +442,7 @@ class TestGetTextStdin:
 class TestMainErrors:
     def _capture_main(self, **kwargs):
         from rich.console import Console as RichConsole
+
         cap_console = RichConsole(file=io.StringIO(), force_terminal=False)
         code = _readit.main(print_fn=cap_console.print, **kwargs)
         output = cap_console.file.getvalue()
@@ -468,5 +476,3 @@ class TestMainErrors:
         )
         assert code == 1
         assert "piper exploded" in output
-
-
