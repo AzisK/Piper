@@ -9,10 +9,18 @@ dependencies = [
     "rich",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
+test = [
+    "pytest>=9.0.2",
+]
+lint = [
+    "mypy>=1.19.1",
+    "ruff>=0.14.1",
+]
 dev = [
-    "mypy",
-    "pytest",
+    {include-group = "test"},
+    {include-group = "lint"},
+    "pre-commit>=4.5.1",
 ]
 
 [tool.setuptools]
