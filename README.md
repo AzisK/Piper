@@ -81,7 +81,7 @@ reed -o output.wav "Save this"
 afplay output.wav
 
 # Adjust speed (lower = slower) and volume
-uv run reed -s 0.8 -v 1.5 "Slower and louder"
+reed -s 0.8 -v 1.5 "Slower and louder"
 
 # Combine speed, volume, and silence
 reed -s 0.7 -v 1.3 --silence 0.3 -f long_article.txt
