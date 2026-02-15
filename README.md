@@ -1,6 +1,6 @@
 # reed
 
-A CLI that reads text aloud using [piper-tts](https://github.com/rhasspy/piper). Uses the `en_US-kristin-medium` voice by default.
+A CLI that reads text aloud using [piper-tts](https://github.com/rhasspy/piper). Uses the `en_US-kristin-medium` voice by default (the CLI does not download the default voice yet) 
 
 ## Features
 
