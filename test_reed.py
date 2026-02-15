@@ -262,8 +262,10 @@ class TestBuildPiperCmd:
 
 
 class TestSpeakText:
-    def test_play_path_calls_piper_then_player(self):
-        from reed import speak_text, _default_play_cmd
+    def test_play_path_calls_piper_then_player(self, monkeypatch):
+        from reed import speak_text
+
+        monkeypatch.setattr("reed.platform.system", lambda: "Darwin")
 
         calls = []
 
@@ -277,8 +279,7 @@ class TestSpeakText:
         assert len(calls) == 2
         assert calls[0][0][1:3] == ["-m", "piper"]
         assert calls[0][1].get("input") == "hi"
-        play_cmd = _default_play_cmd()
-        assert calls[1][0][: len(play_cmd)] == play_cmd
+        assert calls[1][0][0] == "afplay"
 
     def test_output_path_no_afplay(self):
         from reed import speak_text
@@ -307,8 +308,10 @@ class TestSpeakText:
         with pytest.raises(ReedError, match="boom"):
             speak_text("hi", config, run=fake_run)
 
-    def test_playback_error_raises(self):
+    def test_playback_error_raises(self, monkeypatch):
         from reed import speak_text, ReedError
+
+        monkeypatch.setattr("reed.platform.system", lambda: "Darwin")
 
         call_count = 0
 
@@ -517,8 +520,10 @@ class TestDefaultClipboardCmd:
 
 
 class TestGetTextClipboard:
-    def test_clipboard_uses_injected_run(self):
+    def test_clipboard_uses_injected_run(self, monkeypatch):
         from reed import get_text
+
+        monkeypatch.setattr("reed.platform.system", lambda: "Darwin")
 
         def fake_run(cmd, **kwargs):
             return types.SimpleNamespace(
@@ -533,8 +538,10 @@ class TestGetTextClipboard:
         result = get_text(args, stdin=FakeTty(), run=fake_run)
         assert result == "clipboard text"
 
-    def test_clipboard_error_raises(self):
+    def test_clipboard_error_raises(self, monkeypatch):
         from reed import get_text, ReedError
+
+        monkeypatch.setattr("reed.platform.system", lambda: "Darwin")
 
         def fake_run(cmd, **kwargs):
             return types.SimpleNamespace(returncode=1, stdout="", stderr="fail")
