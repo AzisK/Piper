@@ -1,6 +1,6 @@
 # reed
 
-A CLI that reads text aloud using [piper-tts](https://github.com/rhasspy/piper). Uses the `en_US-kristin-medium` voice by default.
+A CLI that reads text aloud using [piper-tts](https://github.com/rhasspy/piper). Uses the `en_US-kristin-medium` voice by default (the CLI does not download the default voice yet) 
 
 ## Features
 
@@ -73,7 +73,7 @@ reed --silence 1 "First sentence. Second sentence. Bye bye."
 # Interactive mode (launches automatically when no input is provided)
 reed
 
-# Interactive mode with silence longer between sentences
+# Interactive mode with longer silence (1 s) between sentences
 reed --silence 1
 
 # Save to WAV file instead of playing
@@ -117,7 +117,7 @@ echo "Notification" | reed -o /tmp/notify.wav && afplay /tmp/notify.wav
 git log --oneline -5 | reed
 
 # Read the content of a webpage, requires soffice (LibreOffice CLI)
-# It can be found in the LibreOffice installation directory and you can add an alias to it
+# It can be found in the LibreOffice app directory and you can add an alias to it
 # alias soffice='/Applications/LibreOffice.app/Contents/MacOS/soffice' inside `~/.zprofile` (~/.zshrc, ~/.bashrc etc.)
 curl -s https://example.com -o /tmp/page.html && \
   soffice --headless --convert-to txt /tmp/page.html --outdir /tmp && \
@@ -127,12 +127,6 @@ curl -s https://example.com -o /tmp/page.html && \
 ### Interactive mode
 
 When launched with no arguments, reed enters interactive mode. Type or paste text and press Enter to hear it read aloud.
-
-#### Visual Enhancements
-
-- **Beautiful banner** with colors and icons
-- **Spinner animation** while generating speech
-- **Enhanced status messages** with panels and success indicators
 
 #### Commands
 
