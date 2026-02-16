@@ -24,6 +24,19 @@ A CLI that reads text aloud using [piper-tts](https://github.com/rhasspy/piper).
 
 ## Installation
 
+### With [Homebrew](https://brew.sh/) (macOS/Linux)
+
+```bash
+brew install azisk/reed/reed
+```
+
+### With [Scoop](https://scoop.sh/) (Windows)
+
+```bash
+scoop bucket add reed https://github.com/AzisK/scoop-reed
+scoop install reed
+```
+
 ### With [uv](https://docs.astral.sh/uv/) (recommended)
 
 ```bash
