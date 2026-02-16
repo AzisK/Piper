@@ -7,7 +7,7 @@ on:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     permissions:
       id-token: write
     steps:
@@ -32,3 +32,31 @@ jobs:
         run: |
           uv build
           uv publish --trusted-publishing always
+
+      - name: Update package managers
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          FAILED=0
+
+          # Homebrew tap
+          curl -fX POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.PACKAGE_MANAGER_TOKEN }}" \
+            https://api.github.com/repos/AzisK/homebrew-reed/dispatches \
+            -d '{"event_type":"update-formula","client_payload":{"version":"'"$VERSION"'"}}' \
+            && echo "✓ Homebrew updated" || { echo "✗ Homebrew failed"; FAILED=1; } &
+          PID_HOMEBREW=$!
+
+          # Scoop bucket
+          curl -fX POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.PACKAGE_MANAGER_TOKEN }}" \
+            https://api.github.com/repos/AzisK/scoop-reed/dispatches \
+            -d '{"event_type":"update-manifest","client_payload":{"version":"'"$VERSION"'"}}' \
+            && echo "✓ Scoop updated" || { echo "✗ Scoop failed"; FAILED=1; } &
+          PID_SCOOP=$!
+
+          wait $PID_HOMEBREW || FAILED=1
+          wait $PID_SCOOP || FAILED=1
+
+          exit $FAILED
