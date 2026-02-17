@@ -137,6 +137,8 @@ def _default_clipboard_cmd() -> list[str]:
         ]:
             if shutil.which(cmd):
                 return [cmd, *args]
+    if platform.system() == "Windows":
+        return ["powershell", "-Command", "Get-Clipboard"]
     raise ReedError("No supported clipboard tool found")
 
 

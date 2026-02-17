@@ -543,10 +543,16 @@ class TestDefaultClipboardCmd:
         with pytest.raises(ReedError, match="No supported clipboard tool found"):
             _default_clipboard_cmd()
 
+    def test_windows_clipboard(self, monkeypatch):
+        from reed import _default_clipboard_cmd
+
+        monkeypatch.setattr("reed.platform.system", lambda: "Windows")
+        assert _default_clipboard_cmd() == ["powershell", "-Command", "Get-Clipboard"]
+
     def test_unknown_platform_raises(self, monkeypatch):
         from reed import ReedError, _default_clipboard_cmd
 
-        monkeypatch.setattr("reed.platform.system", lambda: "Windows")
+        monkeypatch.setattr("reed.platform.system", lambda: "FreeBSD")
         with pytest.raises(ReedError, match="No supported clipboard tool found"):
             _default_clipboard_cmd()
 

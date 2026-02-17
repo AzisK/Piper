@@ -18,7 +18,7 @@ A CLI that reads text aloud using [piper-tts](https://github.com/rhasspy/piper).
 - macOS, Linux, or Windows
   - **macOS**: `afplay` (audio), `pbpaste` (clipboard) — included with the OS
   - **Linux**: one of `paplay`, `aplay`, or `ffplay` (audio); one of `wl-paste`, `xclip`, or `xsel` (clipboard)
-  - **Windows**: `powershell` (audio playback) or `ffplay` fallback
+  - **Windows**: `powershell` `SoundPlayer` (audio) or `ffplay` fallback; PowerShell `Get-Clipboard` (clipboard)
 - Python 3.14+
 
 ## Installation
