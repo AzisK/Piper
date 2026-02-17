@@ -459,9 +459,11 @@ class TestDefaultPlayCmd:
         monkeypatch.setattr("reed.platform.system", lambda: "Windows")
         monkeypatch.setattr(
             "reed.shutil.which",
-            lambda cmd: r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
-            if cmd == "powershell"
-            else None,
+            lambda cmd: (
+                r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+                if cmd == "powershell"
+                else None
+            ),
         )
         result = _default_play_cmd()
         assert result[0] == "powershell"
