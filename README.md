@@ -15,13 +15,11 @@ A CLI that reads text aloud using [piper-tts](https://github.com/rhasspy/piper).
 
 ## Requirements
 
-- Python 3.14+
 - macOS, Linux, or Windows
   - **macOS**: `afplay` (audio), `pbpaste` (clipboard) — included with the OS
   - **Linux**: one of `paplay`, `aplay`, or `ffplay` (audio); one of `wl-paste`, `xclip`, or `xsel` (clipboard)
   - **Windows**: `powershell` (audio playback) or `ffplay` fallback
-- [uv](https://docs.astral.sh/uv/) (for dependency management)
-- Rich library for beautiful terminal UI
+- Python 3.14+
 
 ## Installation
 
@@ -64,28 +62,6 @@ cd reed
 uv venv
 uv pip install -e .
 ```
-
-### Voice Management
-
-Voices are stored in `~/.local/share/reed/` (Linux/macOS, respects `XDG_DATA_HOME`) or `%LOCALAPPDATA%\reed\` (Windows).
-
-The default voice (`en_US-kristin-medium`) is auto-downloaded on first run.
-
-```bash
-# Download a voice
-reed download en_US-amy-medium
-
-# List installed voices
-reed voices
-
-# Use a specific voice by name
-reed -m en_US-amy-medium 'Hello world'
-
-# Or use a custom .onnx file by path
-reed -m /path/to/custom-voice.onnx 'Hello world'
-```
-
-All voice models are hosted on Hugging Face: [https://huggingface.co/rhasspy/piper-voices/tree/main](https://huggingface.co/rhasspy/piper-voices/tree/main)
 
 ## Usage
 
@@ -149,7 +125,7 @@ find . -name "*.txt" | reed
 df -h | reed
 
 # Save piped text to WAV and play it
-echo "Notification" | reed -o /tmp/notify.wav && afplay /tmp/notify.wav
+echo 'Notification' | reed -o /tmp/notify.wav && afplay /tmp/notify.wav
 
 # Read git log
 git log --oneline -5 | reed
@@ -172,6 +148,28 @@ When launched with no arguments, reed enters interactive mode. Type or paste tex
 - Type `/quit` or `/exit` to stop
 - Available commands in interactive mode: `/help`, `/clear`, `/replay`
 - Press `Ctrl-D` for EOF to exit
+
+### Voice Management
+
+Voices are stored in `~/.local/share/reed/` (Linux/macOS, respects `XDG_DATA_HOME`) or `%LOCALAPPDATA%\reed\` (Windows).
+
+The default voice (`en_US-kristin-medium`) is auto-downloaded on first run.
+
+```bash
+# Download a voice
+reed download en_US-amy-medium
+
+# List installed voices
+reed voices
+
+# Use a specific voice by name
+reed -m en_US-amy-medium 'Hello world'
+
+# Or use a custom .onnx file by path
+reed -m /path/to/custom-voice.onnx 'Hello world'
+```
+
+All voice models are hosted on Hugging Face: [https://huggingface.co/rhasspy/piper-voices/tree/main](https://huggingface.co/rhasspy/piper-voices/tree/main)
 
 ### Options
 
