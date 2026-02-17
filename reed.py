@@ -12,10 +12,15 @@ import time
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Optional, TextIO
+from typing import TYPE_CHECKING, Callable, Iterator, Optional, TextIO
 
 if TYPE_CHECKING:
     from prompt_toolkit import PromptSession
+
+try:
+    from pypdf import PdfReader
+except ImportError:  # pragma: no cover - validated in runtime error path
+    PdfReader = None
 
 from rich.console import Console
 from rich.markup import escape
@@ -155,7 +160,10 @@ def get_text(
         return result.stdout.strip()
 
     if args.file:
-        return Path(args.file).read_text()
+        file_path = Path(args.file)
+        if args.pages:
+            raise ReedError("--pages can only be used with PDF files")
+        return file_path.read_text()
 
     if not stdin.isatty():
         return stdin.read().strip()
@@ -164,6 +172,83 @@ def get_text(
         return " ".join(args.text)
 
     raise ReedError("No input provided. Use --help for usage.")
+
+
+def _parse_pdf_pages(page_selection: str, total_pages: int) -> list[int]:
+    selection = page_selection.strip()
+    if not selection:
+        raise ReedError("Invalid page selection")
+
+    selected: list[int] = []
+    seen: set[int] = set()
+    for part in selection.split(","):
+        token = part.strip()
+        if not token:
+            raise ReedError("Invalid page selection")
+
+        if "-" in token:
+            bounds = token.split("-", 1)
+            if len(bounds) != 2 or not bounds[0].isdigit() or not bounds[1].isdigit():
+                raise ReedError("Invalid page selection")
+            start = int(bounds[0])
+            end = int(bounds[1])
+            if start < 1 or end < 1 or end < start:
+                raise ReedError("Invalid page selection")
+            pages = range(start, end + 1)
+        else:
+            if not token.isdigit():
+                raise ReedError("Invalid page selection")
+            page = int(token)
+            if page < 1:
+                raise ReedError("Invalid page selection")
+            pages = [page]
+
+        for page in pages:
+            if page > total_pages:
+                raise ReedError(
+                    f"Page {page} is out of range (PDF has {total_pages} pages)"
+                )
+            index = page - 1
+            if index not in seen:
+                seen.add(index)
+                selected.append(index)
+
+    if not selected:
+        raise ReedError("Invalid page selection")
+    return selected
+
+
+def _iter_pdf_pages(
+    path: Path, page_selection: Optional[str]
+) -> Iterator[tuple[int, int, str]]:
+    """Yield ``(page_number, total_pages, text)`` for each selected PDF page."""
+    if PdfReader is None:
+        raise ReedError("PDF support requires pypdf. Reinstall reed with dependencies.")
+
+    try:
+        reader = PdfReader(str(path))
+    except Exception as e:  # pragma: no cover - depends on third-party parser internals
+        raise ReedError(f"Failed to read PDF: {e}")
+
+    total_pages = len(reader.pages)
+    if total_pages == 0:
+        raise ReedError("PDF has no pages")
+
+    if page_selection:
+        page_indices = _parse_pdf_pages(page_selection, total_pages)
+    else:
+        page_indices = list(range(total_pages))
+
+    found_any = False
+    for index in page_indices:
+        page_text = reader.pages[index].extract_text() or ""
+        page_text = page_text.strip()
+        if page_text:
+            found_any = True
+            yield (index + 1, total_pages, page_text)
+
+    if not found_any:
+        raise ReedError("No extractable text found in PDF")
 
 
 def build_piper_cmd(
@@ -357,7 +442,7 @@ def interactive_loop(
 def _should_enter_interactive(
     args: argparse.Namespace, stdin: Optional[TextIO]
 ) -> bool:
-    if args.text or args.file or args.clipboard:
+    if args.text or args.file or args.clipboard or args.pages:
         return False
     if stdin is not None and hasattr(stdin, "isatty") and stdin.isatty():
         return True
@@ -380,6 +465,11 @@ def main(
     )
     parser.add_argument("text", nargs="*", help="Text to read aloud")
     parser.add_argument("-f", "--file", help="Read text from a file")
+    parser.add_argument(
+        "--pages",
+        default=None,
+        help="PDF pages to read (1-based), e.g. 1,3-5",
+    )
     parser.add_argument(
         "-c", "--clipboard", action="store_true", help="Read text from clipboard"
     )
@@ -410,6 +500,9 @@ def main(
         help="Seconds of silence between sentences",
     )
     args = parser.parse_args(argv)
+    if args.pages and not args.file:
+        print_error("--pages requires --file <PDF>", print_fn)
+        return 1
 
     # Resolve model: None → default, short name → data dir path
     if args.model is None:
@@ -489,6 +582,17 @@ def main(
 
     try:
         assert stdin is not None
+
+        # PDF: generate and play one page at a time
+        if args.file and Path(args.file).suffix.lower() == ".pdf":
+            ensure_model(config, print_fn)
+            for page_num, total, page_text in _iter_pdf_pages(
+                Path(args.file), args.pages
+            ):
+                print_fn(f"\n[bold cyan]📄 Page {page_num}/{total}[/bold cyan]")
+                speak_text(page_text, config, run=run, print_fn=print_fn)
+            return 0
+
         text = get_text(args, stdin, run=run)
 
         if not text:
