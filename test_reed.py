@@ -16,6 +16,7 @@ def _make_args(**overrides):
     defaults = dict(
         text=[],
         file=None,
+        pages=None,
         clipboard=False,
         model=Path(__file__).parent / "en_US-kristin-medium.onnx",
         speed=1.0,
@@ -382,6 +383,16 @@ class TestShouldEnterInteractive:
         args = _make_args(clipboard=True)
         assert _should_enter_interactive(args, io.StringIO()) is False
 
+    def test_pages_provided(self):
+        from reed import _should_enter_interactive
+
+        class FakeTty:
+            def isatty(self):
+                return True
+
+        args = _make_args(pages="1-2")
+        assert _should_enter_interactive(args, FakeTty()) is False
+
     def test_tty_stdin_no_args(self):
         from reed import _should_enter_interactive
 
@@ -620,6 +631,97 @@ class TestGetTextStdin:
         assert result == "hello world"
 
 
+class TestIterPdfPages:
+    def test_pdf_reads_all_pages_when_no_pages_flag(self, monkeypatch):
+        from reed import _iter_pdf_pages
+
+        class FakePage:
+            def __init__(self, text):
+                self._text = text
+
+            def extract_text(self):
+                return self._text
+
+        class FakeReader:
+            def __init__(self, path):
+                self.pages = [FakePage("page one"), FakePage("page two")]
+
+        monkeypatch.setattr("reed.PdfReader", FakeReader)
+
+        result = list(_iter_pdf_pages(Path("book.pdf"), None))
+        assert result == [(1, 2, "page one"), (2, 2, "page two")]
+
+    def test_pdf_reads_selected_pages(self, monkeypatch):
+        from reed import _iter_pdf_pages
+
+        class FakePage:
+            def __init__(self, text):
+                self._text = text
+
+            def extract_text(self):
+                return self._text
+
+        class FakeReader:
+            def __init__(self, path):
+                self.pages = [
+                    FakePage("page one"),
+                    FakePage("page two"),
+                    FakePage("page three"),
+                    FakePage("page four"),
+                ]
+
+        monkeypatch.setattr("reed.PdfReader", FakeReader)
+
+        result = list(_iter_pdf_pages(Path("book.pdf"), "2,4"))
+        assert result == [(2, 4, "page two"), (4, 4, "page four")]
+
+    def test_pdf_page_out_of_bounds_raises(self, monkeypatch):
+        from reed import ReedError, _iter_pdf_pages
+
+        class FakePage:
+            def __init__(self, text):
+                self._text = text
+
+            def extract_text(self):
+                return self._text
+
+        class FakeReader:
+            def __init__(self, path):
+                self.pages = [FakePage("page one"), FakePage("page two")]
+
+        monkeypatch.setattr("reed.PdfReader", FakeReader)
+
+        with pytest.raises(ReedError, match="out of range"):
+            list(_iter_pdf_pages(Path("book.pdf"), "3"))
+
+    def test_pdf_invalid_pages_format_raises(self, monkeypatch):
+        from reed import ReedError, _iter_pdf_pages
+
+        class FakePage:
+            def __init__(self, text):
+                self._text = text
+
+            def extract_text(self):
+                return self._text
+
+        class FakeReader:
+            def __init__(self, path):
+                self.pages = [FakePage("page one"), FakePage("page two")]
+
+        monkeypatch.setattr("reed.PdfReader", FakeReader)
+
+        with pytest.raises(ReedError, match="Invalid page selection"):
+            list(_iter_pdf_pages(Path("book.pdf"), "1,a"))
+
+    def test_pages_flag_with_non_pdf_file_raises(self):
+        from reed import ReedError, get_text
+
+        txt = io.StringIO("file content")
+        args = _make_args(file="notes.txt", pages="1")
+        with pytest.raises(ReedError, match="only be used with PDF files"):
+            get_text(args, stdin=txt)
+
+
 # ─── main error path tests ───────────────────────────────────────────
 
 
@@ -660,6 +762,15 @@ class TestMainErrors:
         )
         assert code == 1
         assert "piper exploded" in output
+
+    def test_pages_without_file_returns_1(self):
+        code, output = self._capture_main(
+            argv=["--pages", "1"],
+            run=lambda *a, **k: types.SimpleNamespace(returncode=0, stderr=""),
+            stdin=io.StringIO(""),
+        )
+        assert code == 1
+        assert "--pages requires --file <PDF>" in output
 
 
 # ─── _data_dir tests ─────────────────────────────────────────────────

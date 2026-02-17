@@ -11,6 +11,7 @@ requires-python = ">=3.14"
 dependencies = [
     "piper-tts",
     "pathvalidate",
+    "pypdf",
     "prompt-toolkit",
     "rich",
 ]

@@ -4,6 +4,8 @@ __pycache__/
 .pytest_cache/
 .venv/
 reedy.egg-info/
+build/
+dist/
 .DS_Store
 *.wav
 *.onnx
