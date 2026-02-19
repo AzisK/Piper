@@ -730,7 +730,9 @@ def main(
         print_error(str(e), print_fn)
         return 1
 
-    play_cmd = _default_play_cmd() if not config.output else None
+    # Resolve playback command lazily in speak_text so non-playback flows
+    # (e.g., empty input, mocked speak_text in tests) don't fail early.
+    play_cmd = None
 
     if _should_enter_interactive(args, stdin):
         loop_fn = interactive_loop_fn or interactive_loop

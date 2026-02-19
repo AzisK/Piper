@@ -332,8 +332,8 @@ class TestSpeakText:
 
 
 class TestMainInteractiveFlag:
-    def test_no_input_defaults_to_interactive(self):
-        from reed import main
+    def test_no_input_defaults_to_interactive(self, monkeypatch):
+        from reed import ReedError, main
 
         loop_called = []
 
@@ -350,6 +350,11 @@ class TestMainInteractiveFlag:
         def fake_loop(**kwargs):
             loop_called.append(True)
             return 0
+
+        def no_player() -> list[str]:
+            raise ReedError("No supported audio player found")
+
+        monkeypatch.setattr("reed._default_play_cmd", no_player)
 
         code = main(
             argv=["-m", __file__],
@@ -1078,13 +1083,21 @@ class TestMainErrors:
         assert code == 1
         assert "Model not found" in output
 
-    def test_empty_text_returns_1(self):
+    def test_empty_text_returns_1(self, monkeypatch):
+        from reed import ReedError
+
+        def no_player() -> list[str]:
+            raise ReedError("No supported audio player found")
+
+        monkeypatch.setattr("reed._default_play_cmd", no_player)
+
         code, output = self._capture_main(
             argv=[],
             run=lambda *a, **k: types.SimpleNamespace(returncode=0, stderr=""),
             stdin=io.StringIO(""),
         )
         assert code == 1
+        assert "No text to read." in output
 
     def test_reed_error_returns_1(self):
         def failing_run(cmd, **kwargs):
