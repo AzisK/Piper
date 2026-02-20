@@ -5,13 +5,17 @@ import argparse
 import os
 import platform
 import shutil
+import signal
 import subprocess
+from subprocess import CompletedProcess
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 import xml.etree.ElementTree as ET
 import zipfile
+from enum import Enum, auto
 from html.parser import HTMLParser
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,9 +37,198 @@ from rich.text import Text
 
 console = Console()
 
+DEFAULT_SILENCE = 0.6
+
 
 class ReedError(Exception):
     pass
+
+
+class PlaybackState(Enum):
+    """Enum representing the current playback state."""
+
+    IDLE = auto()
+    PLAYING = auto()
+    PAUSED = auto()
+    STOPPED = auto()
+
+
+class PlaybackController:
+    """Non-blocking playback controller for managing TTS audio playback.
+
+    Runs piper TTS and audio player in a background thread, allowing
+    pause/resume/stop controls without blocking the interactive prompt.
+    """
+
+    def __init__(self, print_fn: Callable[..., None] = console.print) -> None:
+        self._current_proc: Optional[subprocess.Popen] = None
+        self._piper_proc: Optional[subprocess.Popen] = None
+        self._playback_thread: Optional[threading.Thread] = None
+        self._state = PlaybackState.IDLE
+        self._current_text = ""
+        self._config: Optional[ReedConfig] = None
+        self._lock = threading.Lock()
+        self._print_fn = print_fn
+        self._stop_requested = False
+
+    def play(self, text: str, config: ReedConfig) -> None:
+        """Start playback of text in a background thread.
+
+        If already playing, stops current playback before starting new one.
+        """
+        with self._lock:
+            if self._state == PlaybackState.PLAYING:
+                self._stop_locked()
+            self._current_text = text
+            self._config = config
+            self._state = PlaybackState.PLAYING
+            self._stop_requested = False
+            self._playback_thread = threading.Thread(
+                target=self._playback_worker, args=(text, config), daemon=True
+            )
+            self._playback_thread.start()
+
+    def _playback_worker(self, text: str, config: ReedConfig) -> None:
+        """Background worker that generates and plays audio.
+
+        Runs piper to generate WAV, then plays it with the system audio player.
+        Uses Popen for both to enable pause/resume/stop controls.
+        """
+        play_cmd = _default_play_cmd()
+        tmp_path = None
+
+        try:
+            # Generate WAV with piper
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                tmp_path = tmp.name
+
+            piper_cmd = build_piper_cmd(
+                config.model,
+                config.speed,
+                config.volume,
+                config.silence,
+                Path(tmp_path),
+            )
+            self._piper_proc = subprocess.Popen(
+                piper_cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            piper_stdout, piper_stderr = self._piper_proc.communicate(
+                input=text.encode("utf-8")
+            )
+
+            if self._stop_requested or self._piper_proc.returncode != 0:
+                self._print_fn("\n[bold red]✗ Piper error[/bold red]")
+                return
+
+            # Play WAV with audio player
+            self._current_proc = subprocess.Popen([*play_cmd, tmp_path])
+
+            # Wait for playback to complete or be interrupted
+            self._current_proc.wait()
+
+            if self._stop_requested:
+                self._state = PlaybackState.STOPPED
+                self._print_fn("[bold red]⏹ Stopped[/bold red]")
+            else:
+                self._print_fn("[bold green]✓ Done[/bold green]")
+
+        except Exception as e:
+            self._print_fn(f"[bold red]Playback error: {e}[/bold red]")
+        finally:
+            # Cleanup temp file
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+            # Reset state if not stopped
+            with self._lock:
+                if self._state not in (PlaybackState.STOPPED, PlaybackState.PAUSED):
+                    self._state = PlaybackState.IDLE
+                self._current_proc = None
+                self._piper_proc = None
+
+    def pause(self) -> bool:
+        """Pause playback. Returns True if successful.
+
+        On Unix: sends SIGSTOP to player process.
+        On Windows: not supported, returns False.
+        """
+        with self._lock:
+            if self._state != PlaybackState.PLAYING or self._current_proc is None:
+                return False
+            if os.name == "posix":
+                self._current_proc.send_signal(signal.SIGSTOP)
+                self._state = PlaybackState.PAUSED
+                self._print_fn("\n[bold yellow]⏸ Paused[/bold yellow]")
+                return True
+            return False
+
+    def resume(self) -> bool:
+        """Resume paused playback. Returns True if successful.
+
+        On Unix: sends SIGCONT to player process.
+        On Windows: not supported, returns False.
+        """
+        with self._lock:
+            if self._state != PlaybackState.PAUSED or self._current_proc is None:
+                return False
+            if os.name == "posix":
+                self._current_proc.send_signal(signal.SIGCONT)
+                self._state = PlaybackState.PLAYING
+                self._print_fn("\n[bold green]▶ Playing...[/bold green]")
+                return True
+            return False
+
+    def stop(self) -> bool:
+        """Stop playback. Returns True if was playing/paused."""
+        with self._lock:
+            return self._stop_locked()
+
+    def _stop_locked(self) -> bool:
+        """Internal stop implementation - must be called with lock held."""
+        if self._state == PlaybackState.IDLE:
+            return False
+
+        self._stop_requested = True
+
+        if self._current_proc:
+            try:
+                self._current_proc.terminate()
+                self._current_proc.wait(timeout=2)
+            except (subprocess.TimeoutExpired, ProcessLookupError):
+                try:
+                    self._current_proc.kill()
+                except ProcessLookupError:
+                    pass
+
+        if self._piper_proc and self._piper_proc.poll() is None:
+            try:
+                self._piper_proc.terminate()
+            except ProcessLookupError:
+                pass
+
+        self._state = PlaybackState.IDLE
+        self._current_proc = None
+        self._piper_proc = None
+        return True
+
+    def is_playing(self) -> bool:
+        """Check if currently playing."""
+        with self._lock:
+            return self._state == PlaybackState.PLAYING
+
+    def wait(self) -> None:
+        """Block until playback completes (for non-interactive mode)."""
+        if self._playback_thread:
+            self._playback_thread.join()
+
+    def get_current_text(self) -> str:
+        """Get the currently playing text (for replay)."""
+        return self._current_text
 
 
 def _data_dir() -> Path:
@@ -66,7 +259,9 @@ def _model_url(name: str) -> tuple[str, str]:
     return (f"{base}.onnx", f"{base}.onnx.json")
 
 
-def _download_file(url: str, dest: Path, print_fn: Callable = console.print) -> None:
+def _download_file(
+    url: str, dest: Path, print_fn: Callable[..., None] = console.print
+) -> None:
     print_fn(f"[bold cyan]⬇ Downloading[/bold cyan] {escape(dest.name)}…")
     urllib.request.urlretrieve(url, dest)
     print_fn(f"[bold green]✓ Saved[/bold green] {escape(str(dest))}")
@@ -77,11 +272,13 @@ class ReedConfig:
     model: Path = DEFAULT_MODEL
     speed: float = 1.0
     volume: float = 1.0
-    silence: float = 0.6
+    silence: float = DEFAULT_SILENCE
     output: Optional[Path] = None
 
 
-def ensure_model(config: ReedConfig, print_fn: Callable = console.print) -> None:
+def ensure_model(
+    config: ReedConfig, print_fn: Callable[..., None] = console.print
+) -> None:
     if config.model.exists():
         return
     if config.model.parent != _data_dir():
@@ -155,7 +352,7 @@ def _default_clipboard_cmd() -> list[str]:
 def get_text(
     args: argparse.Namespace,
     stdin: TextIO,
-    run: Callable = subprocess.run,
+    run: Callable[..., CompletedProcess] = subprocess.run,
 ) -> str:
     if args.clipboard:
         clipboard_cmd = _default_clipboard_cmd()
@@ -428,15 +625,17 @@ def build_piper_cmd(
     return cmd
 
 
-def print_generation_progress(print_fn: Callable = console.print) -> None:
+def print_generation_progress(print_fn: Callable[..., None] = console.print) -> None:
     print_fn("[bold cyan]⠋ Generating speech...[/bold cyan]")
 
 
-def print_playback_progress(print_fn: Callable = console.print) -> None:
+def print_playback_progress(print_fn: Callable[..., None] = console.print) -> None:
     print_fn("[bold green]▶ Playing...[/bold green]")
 
 
-def print_saved_message(output: Path, print_fn: Callable = console.print) -> None:
+def print_saved_message(
+    output: Path, print_fn: Callable[..., None] = console.print
+) -> None:
     panel = Panel.fit(
         f"[bold green]✓ Successfully saved[/bold green]\n\n"
         f"[dim]File:[/dim] [cyan]{escape(str(output))}[/cyan]",
@@ -446,7 +645,7 @@ def print_saved_message(output: Path, print_fn: Callable = console.print) -> Non
     print_fn(panel)
 
 
-def print_error(message: str, print_fn: Callable = console.print) -> None:
+def print_error(message: str, print_fn: Callable[..., None] = console.print) -> None:
     panel = Panel.fit(
         f"[bold red]{escape(message)}[/bold red]",
         title="[bold]Error[/bold]",
@@ -455,11 +654,11 @@ def print_error(message: str, print_fn: Callable = console.print) -> None:
     print_fn(panel)
 
 
-def print_banner(print_fn: Callable = console.print) -> None:
+def print_banner(print_fn: Callable[..., None] = console.print) -> None:
     print_fn(Text.from_markup(BANNER_MARKUP))
 
 
-def print_help(print_fn: Callable = console.print) -> None:
+def print_help(print_fn: Callable[..., None] = console.print) -> None:
     text = Text.from_markup("\n[bold]Available Commands:[/bold]\n")
     for cmd, desc in COMMANDS.items():
         cmd_text = Text(cmd)
@@ -472,11 +671,24 @@ def print_help(print_fn: Callable = console.print) -> None:
 def speak_text(
     text: str,
     config: ReedConfig,
-    run: Callable = subprocess.run,
-    print_fn: Callable = console.print,
+    run: Callable[..., CompletedProcess] = subprocess.run,
+    print_fn: Callable[..., None] = console.print,
     play_cmd: Optional[list[str]] = None,
+    controller: Optional[PlaybackController] = None,
 ) -> None:
+    """Speak text aloud.
+
+    Args:
+        text: Text to speak.
+        config: Reed configuration.
+        run: subprocess runner (for testing).
+        print_fn: Function for printing messages.
+        play_cmd: Audio player command (optional, auto-detected if None).
+        controller: PlaybackController for non-blocking playback (optional).
+                   If provided, playback is non-blocking. If None, blocks.
+    """
     if config.output:
+        # File output mode - always blocking
         print_generation_progress(print_fn)
         start = time.time()
         piper_cmd = build_piper_cmd(
@@ -488,7 +700,12 @@ def speak_text(
             raise ReedError(f"piper error: {proc.stderr}")
         print_fn(f"\n[bold green]✓ Done in {elapsed:.1f}s[/bold green]")
         print_saved_message(config.output, print_fn)
+    elif controller is not None:
+        # Non-blocking mode with controller
+        print_generation_progress(print_fn)
+        controller.play(text, config)
     else:
+        # Legacy blocking mode
         print_generation_progress(print_fn)
         start = time.time()
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
@@ -536,9 +753,10 @@ def interactive_loop(
     speak_line: Callable[[str], None],
     prompt: str = "> ",
     quit_words: tuple[str, ...] = QUIT_WORDS,
-    print_fn: Callable = console.print,
+    print_fn: Callable[..., None] = console.print,
     prompt_fn: Optional[Callable[[], str]] = None,
-    clear_fn: Callable = console.clear,
+    clear_fn: Callable[..., None] = console.clear,
+    controller: Optional[PlaybackController] = None,
 ) -> int:
     quit_set = {w.lower() for w in quit_words}
     help_cmd = "/help"
@@ -576,7 +794,15 @@ def interactive_loop(
                 print_banner(print_fn)
                 continue
             elif cmd == replay_cmd:
-                if last_text:
+                if controller is not None:
+                    # Replay using controller's stored text
+                    replay_text = controller.get_current_text()
+                    if replay_text:
+                        speak_line(replay_text)
+                        print_fn("")
+                    else:
+                        print_fn("[bold yellow]No text to replay.[/bold yellow]\n")
+                elif last_text:
                     speak_line(last_text)
                     print_fn("")
                 else:
@@ -605,10 +831,10 @@ def _should_enter_interactive(
 
 def main(
     argv: Optional[list[str]] = None,
-    run: Callable = subprocess.run,
-    interactive_loop_fn: Optional[Callable] = None,
+    run: Callable[..., CompletedProcess] = subprocess.run,
+    interactive_loop_fn: Optional[Callable[..., int]] = None,
     stdin: Optional[TextIO] = None,
-    print_fn: Callable = console.print,
+    print_fn: Callable[..., None] = console.print,
 ) -> int:
     if stdin is None:
         stdin = sys.stdin
@@ -650,7 +876,7 @@ def main(
     parser.add_argument(
         "--silence",
         type=float,
-        default=0.6,
+        default=DEFAULT_SILENCE,
         help="Seconds of silence between sentences",
     )
     args = parser.parse_args(argv)
@@ -735,12 +961,20 @@ def main(
     play_cmd = None
 
     if _should_enter_interactive(args, stdin):
+        # Create controller for non-blocking interactive playback
+        controller = PlaybackController(print_fn=print_fn)
         loop_fn = interactive_loop_fn or interactive_loop
         code = loop_fn(
             speak_line=lambda line: speak_text(
-                line, config, run=run, print_fn=print_fn, play_cmd=play_cmd
+                line,
+                config,
+                run=run,
+                print_fn=print_fn,
+                play_cmd=play_cmd,
+                controller=controller,
             ),
             print_fn=print_fn,
+            controller=controller,
         )
         return code
 

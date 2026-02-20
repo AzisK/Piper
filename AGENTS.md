@@ -16,10 +16,16 @@ This is `reed`, a convenient CLI for text-to-speech using piper-tts.
 - Windows: `powershell`/`ffplay` for audio, `powershell Get-Clipboard` for clipboard
 - Rich (terminal UI library for styled output)
 - Voice models stored in `~/.local/share/reed/` (Linux/macOS) or `%LOCALAPPDATA%\reed\` (Windows)
+- `prompt_toolkit` (interactive prompt with history and autocomplete)
 
 ## Structure
 
 - `reed.py` — single-file CLI module, installed as console script via pyproject.toml
+- `test_reed.py` — comprehensive test suite (TDD approach)
+- `ARCHITECTURE.md` — detailed system design, component diagrams, and data flow
+- `ROADMAP.md` — feature roadmap with priorities and dependencies
+
+Start here: Read `ARCHITECTURE.md` before implementing features that touch playback, interactive mode, or file processing.
 
 ## Commands
 
@@ -41,6 +47,13 @@ This is `reed`, a convenient CLI for text-to-speech using piper-tts.
 - Tests use dependency injection (fake `run`, `stdin`, `print_fn`) to avoid real subprocess calls
 - The `reed` module is imported directly (`import reed as _reed`)
 - Run full test suite before and after every change: `uv run pytest -v`
+- New components: Add tests for `PlaybackController` state transitions, thread safety, and signal handling
+
+## Workflow
+
+- Plan first: Before implementing any feature or fix, outline your approach and identify affected components
+- Always run tests after code changes: Verify changes don't break existing functionality
+- Use a subagent for running tests to avoid polluting the main conversation context with verbose output
 
 ## Conventions
 
@@ -49,6 +62,9 @@ This is `reed`, a convenient CLI for text-to-speech using piper-tts.
 - Use `subprocess` to invoke piper and platform audio player
 - Default model auto-downloaded to `_data_dir()` on first run
 - `ReedConfig` dataclass for core configuration
+- Thread safety: Use `threading.Lock` for shared state in `PlaybackController`
+- Non-blocking playback: Interactive mode uses `PlaybackController`; file/output modes use blocking `subprocess.run()`
+- Platform checks: Use `os.name == "posix"` for Unix-specific behavior (SIGSTOP/SIGCONT)
 
  ## UI Development
 
@@ -58,3 +74,4 @@ This is `reed`, a convenient CLI for text-to-speech using piper-tts.
  - Commands available in interactive mode: `/quit`, `/exit`, `/help`, `/clear`, `/replay`
  - Tab autocomplete available for commands
  - Include `print_fn` parameter for testability with dependency injection
+ - Playback state: Future `/pause`, `/play`, `/stop` commands will wire to `PlaybackController` methods

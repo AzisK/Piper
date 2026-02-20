@@ -1337,3 +1337,325 @@ class TestResolveModel:
             stdin=FakeTty(),
         )
         assert code == 0
+
+
+# ─── PlaybackController tests ────────────────────────────────────────
+
+
+class TestPlaybackState:
+    def test_enum_values(self):
+        from reed import PlaybackState
+
+        assert PlaybackState.IDLE.value == 1
+        assert PlaybackState.PLAYING.value == 2
+        assert PlaybackState.PAUSED.value == 3
+        assert PlaybackState.STOPPED.value == 4
+
+
+class TestPlaybackController:
+    def test_init_sets_idle_state(self):
+        from reed import PlaybackController
+
+        controller = PlaybackController(print_fn=lambda *a, **k: None)
+        assert controller.is_playing() is False
+
+    def test_play_starts_background_thread(self, monkeypatch):
+        from reed import PlaybackController, ReedConfig
+
+        started = []
+
+        def fake_thread(*args, **kwargs):
+            started.append(True)
+            # Don't actually start thread in test
+            return types.SimpleNamespace(start=lambda: None)
+
+        monkeypatch.setattr(_reed.threading, "Thread", fake_thread)
+
+        controller = PlaybackController(print_fn=lambda *a, **k: None)
+        config = ReedConfig(model=Path("test.onnx"))
+        controller.play("hello", config)
+
+        assert len(started) == 1
+        assert controller.get_current_text() == "hello"
+
+    def test_stop_when_idle_returns_false(self):
+        from reed import PlaybackController
+
+        controller = PlaybackController(print_fn=lambda *a, **k: None)
+        result = controller.stop()
+        assert result is False
+
+    def test_pause_when_not_playing_returns_false(self):
+        from reed import PlaybackController
+
+        controller = PlaybackController(print_fn=lambda *a, **k: None)
+        result = controller.pause()
+        assert result is False
+
+    def test_resume_when_not_paused_returns_false(self):
+        from reed import PlaybackController
+
+        controller = PlaybackController(print_fn=lambda *a, **k: None)
+        result = controller.resume()
+        assert result is False
+
+    def test_pause_on_posix_sends_sigstop(self, monkeypatch):
+        from reed import PlaybackController, PlaybackState, ReedConfig
+
+        signals_sent = []
+        fake_proc = types.SimpleNamespace(
+            send_signal=lambda sig: signals_sent.append(sig),
+            poll=lambda: None,
+        )
+
+        controller = PlaybackController(print_fn=lambda *a, **k: None)
+        controller._state = PlaybackState.PLAYING
+        controller._current_proc = fake_proc
+        controller._config = ReedConfig(model=Path("test.onnx"))
+
+        monkeypatch.setattr("reed.os.name", "posix")
+
+        result = controller.pause()
+
+        assert result is True
+        assert len(signals_sent) == 1
+        assert signals_sent[0] == _reed.signal.SIGSTOP
+        assert controller._state == PlaybackState.PAUSED
+
+    def test_pause_on_windows_returns_false(self, monkeypatch):
+        from reed import PlaybackController, PlaybackState, ReedConfig
+
+        fake_proc = types.SimpleNamespace()
+        controller = PlaybackController(print_fn=lambda *a, **k: None)
+        controller._state = PlaybackState.PLAYING
+        controller._current_proc = fake_proc
+        controller._config = ReedConfig(model=Path("test.onnx"))
+
+        monkeypatch.setattr("reed.os.name", "nt")
+
+        result = controller.pause()
+
+        assert result is False
+        assert controller._state == PlaybackState.PLAYING
+
+    def test_resume_on_posix_sends_sigcont(self, monkeypatch):
+        from reed import PlaybackController, PlaybackState, ReedConfig
+
+        signals_sent = []
+        fake_proc = types.SimpleNamespace(
+            send_signal=lambda sig: signals_sent.append(sig),
+            poll=lambda: None,
+        )
+
+        controller = PlaybackController(print_fn=lambda *a, **k: None)
+        controller._state = PlaybackState.PAUSED
+        controller._current_proc = fake_proc
+        controller._config = ReedConfig(model=Path("test.onnx"))
+
+        monkeypatch.setattr("reed.os.name", "posix")
+
+        result = controller.resume()
+
+        assert result is True
+        assert len(signals_sent) == 1
+        assert signals_sent[0] == _reed.signal.SIGCONT
+        assert controller._state == PlaybackState.PLAYING
+
+    def test_resume_on_windows_returns_false(self, monkeypatch):
+        from reed import PlaybackController, PlaybackState, ReedConfig
+
+        fake_proc = types.SimpleNamespace()
+        controller = PlaybackController(print_fn=lambda *a, **k: None)
+        controller._state = PlaybackState.PAUSED
+        controller._current_proc = fake_proc
+        controller._config = ReedConfig(model=Path("test.onnx"))
+
+        monkeypatch.setattr("reed.os.name", "nt")
+
+        result = controller.resume()
+
+        assert result is False
+        assert controller._state == PlaybackState.PAUSED
+
+    def test_stop_terminates_processes(self, monkeypatch):
+        from reed import PlaybackController, PlaybackState, ReedConfig
+
+        terminated = {"player": False, "piper": False}
+
+        def fake_terminate_player():
+            terminated["player"] = True
+
+        def fake_terminate_piper():
+            terminated["piper"] = True
+
+        fake_player = types.SimpleNamespace(
+            terminate=fake_terminate_player,
+            wait=lambda timeout: None,
+        )
+        fake_piper = types.SimpleNamespace(
+            terminate=fake_terminate_piper,
+            poll=lambda: None,
+        )
+
+        controller = PlaybackController(print_fn=lambda *a, **k: None)
+        controller._state = PlaybackState.PLAYING
+        controller._current_proc = fake_player
+        controller._piper_proc = fake_piper
+        controller._config = ReedConfig(model=Path("test.onnx"))
+
+        result = controller.stop()
+
+        assert result is True
+        assert terminated["player"] is True
+        assert terminated["piper"] is True
+        assert controller._state == PlaybackState.IDLE
+        assert controller._current_proc is None
+        assert controller._piper_proc is None
+
+    def test_stop_handles_process_not_found(self, monkeypatch):
+        from reed import PlaybackController, PlaybackState, ReedConfig
+
+        def fake_terminate():
+            raise ProcessLookupError("No such process")
+
+        def fake_kill():
+            pass
+
+        fake_player = types.SimpleNamespace(
+            terminate=fake_terminate,
+            wait=lambda timeout: (_ for _ in ()).throw(ProcessLookupError()),
+            kill=fake_kill,
+        )
+
+        controller = PlaybackController(print_fn=lambda *a, **k: None)
+        controller._state = PlaybackState.PLAYING
+        controller._current_proc = fake_player
+        controller._config = ReedConfig(model=Path("test.onnx"))
+
+        result = controller.stop()
+
+        assert result is True
+        assert controller._state == PlaybackState.IDLE
+
+    def test_stop_handles_timeout_then_kills(self, monkeypatch):
+        from reed import PlaybackController, PlaybackState, ReedConfig, subprocess
+
+        wait_called = [0]
+
+        def fake_wait(timeout):
+            wait_called[0] += 1
+            if wait_called[0] == 1:
+                raise subprocess.TimeoutExpired(cmd="test", timeout=timeout)
+
+        def fake_kill():
+            pass
+
+        fake_player = types.SimpleNamespace(
+            terminate=lambda: None,
+            wait=fake_wait,
+            kill=fake_kill,
+        )
+
+        controller = PlaybackController(print_fn=lambda *a, **k: None)
+        controller._state = PlaybackState.PLAYING
+        controller._current_proc = fake_player
+        controller._config = ReedConfig(model=Path("test.onnx"))
+
+        result = controller.stop()
+
+        assert result is True
+        assert controller._state == PlaybackState.IDLE
+
+    def test_get_current_text_returns_last_text(self):
+        from reed import PlaybackController
+
+        controller = PlaybackController(print_fn=lambda *a, **k: None)
+        controller._current_text = "test text"
+        assert controller.get_current_text() == "test text"
+
+    def test_wait_joins_thread(self, monkeypatch):
+        from reed import PlaybackController
+
+        joined = []
+        fake_thread = types.SimpleNamespace(join=lambda: joined.append(True))
+
+        controller = PlaybackController(print_fn=lambda *a, **k: None)
+        controller._playback_thread = fake_thread
+
+        controller.wait()
+
+        assert joined == [True]
+
+    def test_wait_with_no_thread_does_nothing(self):
+        from reed import PlaybackController
+
+        controller = PlaybackController(print_fn=lambda *a, **k: None)
+        controller._playback_thread = None
+        controller.wait()  # Should not raise
+
+    def test_play_stops_existing_before_starting(self, monkeypatch):
+        from reed import PlaybackController, PlaybackState, ReedConfig
+
+        stopped = []
+        config = ReedConfig(model=Path("test.onnx"))
+
+        controller = PlaybackController(print_fn=lambda *a, **k: None)
+        controller._state = PlaybackState.PLAYING
+
+        def fake_stop_locked():
+            stopped.append(True)
+
+        controller._stop_locked = fake_stop_locked
+
+        controller.play("new text", config)
+
+        assert stopped == [True]
+        assert controller.get_current_text() == "new text"
+
+
+# ─── speak_text with controller tests ────────────────────────────────
+
+
+class TestSpeakTextWithController:
+    def test_with_controller_uses_non_blocking_playback(self, monkeypatch):
+        from reed import PlaybackController, ReedConfig, speak_text
+
+        played_texts = []
+
+        def fake_play(self, text, config):
+            played_texts.append(text)
+
+        monkeypatch.setattr(PlaybackController, "play", fake_play)
+
+        config = ReedConfig(model=Path("test.onnx"))
+        controller = PlaybackController(print_fn=lambda *a, **k: None)
+
+        speak_text(
+            "hello", config, print_fn=lambda *a, **k: None, controller=controller
+        )
+
+        assert played_texts == ["hello"]
+
+    def test_with_controller_output_mode_still_blocking(self, monkeypatch):
+        from reed import PlaybackController, ReedConfig, speak_text
+
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return types.SimpleNamespace(returncode=0, stderr="")
+
+        config = ReedConfig(model=Path("test.onnx"), output=Path("/tmp/out.wav"))
+        controller = PlaybackController(print_fn=lambda *a, **k: None)
+
+        speak_text(
+            "hello",
+            config,
+            run=fake_run,
+            print_fn=lambda *a, **k: None,
+            controller=controller,
+        )
+
+        # Should only call piper (not player), controller not used for output mode
+        assert len(calls) == 1
+        assert "--output-file" in calls[0]

@@ -8,7 +8,7 @@ A CLI that reads text aloud using [piper-tts](https://github.com/rhasspy/piper).
 - **PDF support** — read full PDFs or selected pages with `--pages`
 - **EPUB support** — read EPUB e-books, select chapters with `--pages`
 - **Pipe-friendly** — reads from stdin, works anywhere in a shell pipeline
-- **Interactive mode** — conversational TTS with `/replay`, `/help`, `/clear`, tab completion, and history
+- **Interactive mode** — conversational TTS with `/replay`, `/help`, `/clear`, tab completion, history, and non-blocking playback
 - **Adjustable speech** — control speed (`-s`), volume (`-v`), and sentence silence (`--silence`)
 - **Voice management** — download, list, and switch voices (`reed download`, `reed voices`, `-m`)
 - **Swappable voices** — use any piper-tts `.onnx` model with `-m`
@@ -162,6 +162,8 @@ When launched with no arguments, reed enters interactive mode. Type or paste tex
 - Type `/quit` or `/exit` to stop
 - Available commands in interactive mode: `/help`, `/clear`, `/replay`
 - Press `Ctrl-D` for EOF to exit
+
+**Note:** Interactive mode uses non-blocking playback — you can type the next line while audio is still playing.
 
 ### Voice Management
 
