@@ -10,23 +10,22 @@
 - Fuzzy-match support so `/h` → `/help`
 - Extend to file paths for a future `/open` command
 
-### 1.2 Non-blocking Playback Controller
+### 1.2 Non-blocking Playback Controller ✅
 **Effort:** Medium · **Priority:** High
 **Dependencies:** None
+**Status:** Done
 
-Currently `speak_text()` blocks on `subprocess.run()` for playback. All interactive playback features depend on making this non-blocking.
-
-- Replace `subprocess.run([*play_cmd, tmp.name])` with a background `subprocess.Popen` process
-- Create a `PlaybackController` class that tracks the playback `Popen` instance
-  - **Pause:** send `SIGSTOP` (Unix) / suspend thread (Windows)
-  - **Resume:** send `SIGCONT` (Unix) / resume thread (Windows)
-  - **Stop:** `proc.terminate()`
-- Run playback in a background thread so the interactive prompt remains responsive
-- Alternative: use `python-sounddevice` or `simpleaudio` for native Python playback with frame-level control (finer granularity but adds a dependency)
+- ✅ Create `PlaybackController` class with background thread playback
+- ✅ Pause/resume via `SIGSTOP`/`SIGCONT` (Unix)
+- ✅ Stop via `proc.terminate()`
+- ✅ Thread-safe state management with `threading.Lock`
+- ✅ Integrated into interactive mode
+- ✅ Zero new dependencies (stdlib `threading` + `signal`)
 
 ### 1.3 Playback Controls — Pause, Play, Stop
 **Effort:** Small · **Priority:** High
-**Dependencies:** 1.2 (non-blocking playback)
+**Dependencies:** 1.2 (non-blocking playback) ✅
+**Status:** Ready to implement
 
 - Add interactive commands: `/pause`, `/play` (resume), `/stop`
 - Wire commands to `PlaybackController.pause()`, `.resume()`, `.stop()`
@@ -55,7 +54,8 @@ Currently `speak_text()` blocks on `subprocess.run()` for playback. All interact
 
 ### 3.1 Save & Resume Reading Position
 **Effort:** Medium · **Priority:** Medium
-**Dependencies:** Phase 1.2 (stop controls), Phase 2.1 (epub support desirable)
+**Dependencies:** Phase 1.2 (stop controls) ✅, Phase 2.1 (epub support desirable) ✅
+**Status:** Ready to implement
 
 - Create a JSON bookmarks file at `_data_dir() / "bookmarks.json"`
 - Schema:
@@ -79,7 +79,8 @@ Currently `speak_text()` blocks on `subprocess.run()` for playback. All interact
 
 ### 4.1 Streaming TTS Playback
 **Effort:** Large · **Priority:** Medium
-**Dependencies:** Phase 1.2 (playback controller)
+**Dependencies:** Phase 1.2 (playback controller) ✅
+**Status:** Ready to implement
 
 Currently reed generates the full WAV file before playing. Streaming removes that wait.
 
@@ -116,14 +117,14 @@ No Lithuanian piper voice model exists yet — this requires training one from s
 
 ## Summary Timeline
 
-| Phase | Feature | Effort | Dependencies |
-|-------|---------|--------|--------------|
-| 1.1 | Command autocomplete | Small | — |
-| 1.2 | Non-blocking playback controller | Medium | — |
-| 1.3 | Pause / play / stop commands | Small | 1.2 |
-| 2.1 | ✅ EPUB reading | Medium | — |
-| 3.1 | Save & resume position | Medium | 1.2, 2.1 |
-| 4.1 | Streaming audio | Large | 1.2 |
-| 5.1 | Lithuanian voice model training | Large | — |
+| Phase | Feature | Effort | Dependencies | Status |
+|-------|---------|--------|--------------|--------|
+| 1.1 | Command autocomplete | Small | — | Partial |
+| 1.2 | Non-blocking playback controller | Medium | — | ✅ Done |
+| 1.3 | Pause / play / stop commands | Small | 1.2 | Ready |
+| 2.1 | EPUB reading | Medium | — | ✅ Done |
+| 3.1 | Save & resume position | Medium | 1.2, 2.1 | Ready |
+| 4.1 | Streaming audio | Large | 1.2 | Ready |
+| 5.1 | Lithuanian voice model training | Large | — | — |
 
-Phases 1.1, 1.2, 2.1, and 5.1 can all be started in parallel. Phases 1.3, 3.1, and 4.1 build on the non-blocking playback controller (1.2).
+Phase 1.2 is complete ✅. Phases 1.3, 3.1, and 4.1 now have their dependencies satisfied and are ready to implement.
