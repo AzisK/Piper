@@ -1402,6 +1402,9 @@ class TestPlaybackController:
     def test_pause_on_posix_sends_sigstop(self, monkeypatch):
         from reed import PlaybackController, PlaybackState, ReedConfig
 
+        sigstop = getattr(_reed.signal, "SIGSTOP", 9999)
+        monkeypatch.setattr(_reed.signal, "SIGSTOP", sigstop, raising=False)
+
         signals_sent = []
         fake_proc = types.SimpleNamespace(
             send_signal=lambda sig: signals_sent.append(sig),
@@ -1419,7 +1422,7 @@ class TestPlaybackController:
 
         assert result is True
         assert len(signals_sent) == 1
-        assert signals_sent[0] == _reed.signal.SIGSTOP
+        assert signals_sent[0] == sigstop
         assert controller._state == PlaybackState.PAUSED
 
     def test_pause_on_windows_returns_false(self, monkeypatch):
@@ -1441,6 +1444,9 @@ class TestPlaybackController:
     def test_resume_on_posix_sends_sigcont(self, monkeypatch):
         from reed import PlaybackController, PlaybackState, ReedConfig
 
+        sigcont = getattr(_reed.signal, "SIGCONT", 9998)
+        monkeypatch.setattr(_reed.signal, "SIGCONT", sigcont, raising=False)
+
         signals_sent = []
         fake_proc = types.SimpleNamespace(
             send_signal=lambda sig: signals_sent.append(sig),
@@ -1458,7 +1464,7 @@ class TestPlaybackController:
 
         assert result is True
         assert len(signals_sent) == 1
-        assert signals_sent[0] == _reed.signal.SIGCONT
+        assert signals_sent[0] == sigcont
         assert controller._state == PlaybackState.PLAYING
 
     def test_resume_on_windows_returns_false(self, monkeypatch):
